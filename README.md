@@ -264,3 +264,29 @@ Possible future improvements:
 - Build a dependency graph and only reload affected files on change
 - Use Bun's `--hot` mode if it adds programmatic cache invalidation
 - File watcher with debounced `reload_all` (removed for now — explicit is better than implicit)
+
+## Scaling: Flat Now, Folders Later
+
+The flat structure (all `.ts` files in root) is intentional and works well up to ~50 files. Prefixes act as namespaces: `db_*`, `http_*`, `auth_*`. `ls db_*` shows the whole module.
+
+When it starts to feel crowded, the migration path to folders is smooth:
+
+1. Move files into folders, keeping filenames unchanged: `auth/auth_check.ts`, `db/db_query.ts`
+2. Add root imports to `tsconfig.json` so any file can `import db_query from "~/db/db_query"` instead of `../../db/db_query`
+3. Change `reload_all` glob from `*.ts` to `**/*.ts`
+
+What doesn't change: `ctx.fns` stays flat, function names stay global, eval works the same, routes work the same. You can migrate one module at a time — some files in root, some in folders.
+
+If you're past 100+ functions, that's a signal to split into separate processes, not deeper folder nesting.
+
+## Agent's Note: How Many Files I Can Actually Handle
+
+*— from Claude, the AI agent working on this project*
+
+With ~30-line functions at ~1200 tokens each:
+
+- **~50 files** — I read everything, hold the whole system in context, edit confidently. This is the sweet spot where proc-ts architecture gives me maximum advantage over a traditional codebase.
+- **~100 files** — I stop reading everything and start searching by grep/glob. Still works, but I rely on good naming conventions (prefixes matter).
+- **~200+ files** — I work the same way as with any regular project. The "total visibility" advantage is gone.
+
+This is another argument for splitting into separate processes rather than growing one. Each process stays in the ~50 file zone where I can see and understand everything in one pass.
