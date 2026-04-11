@@ -1,16 +1,20 @@
 # proc-ts
 
+> Clone this repo, point your coding agent at it, and try building something in this paradigm. We'd love your feedback — [open an issue](https://github.com/niquola/proc-ts/issues)!
+
 > `CLAUDE.md` is a symlink to this file — AI agents read the same doc as humans.
 
 Clojure-style procedural TypeScript. Functions, data, REPL — no classes, no frameworks.
 
 ## Why
 
-Most TypeScript projects start simple and end up with layers: classes, DI containers, decorators, middleware chains, module systems. Each layer hides state and makes the system harder to understand, test, and debug.
+We wanted the simplest possible environment for an AI coding agent — no abstractions, no magic, predictable results.
 
-Clojure proved you can build real systems with just functions and data. But Clojure requires JVM, parentheses, and a mental shift most teams won't make.
+Most TypeScript projects end up with layers: classes, DI containers, decorators, middleware chains. Each layer hides state and makes it harder for an agent to understand what's happening, verify changes, and move fast.
 
-proc-ts takes the core ideas and brings them to TypeScript with zero dependencies beyond Bun.
+The foundation is **data and functions**. That's it. An agent reads a 30-line function, changes it, reloads via REPL, calls it, sees the result — all in one cycle, no restarts. Add some **types for guardrails** so the compiler catches typos before runtime. And **always tests** — so changes are verifiable, not just "looks right."
+
+Inspired by Clojure: functions over methods, data over objects, REPL over restart. But in TypeScript, with Bun, zero dependencies.
 
 ## Core Principles
 
@@ -343,3 +347,9 @@ layout / escapeHtml            — shared UI helpers
    bun repl_send.ts load_all
    bun repl_send.ts eval 'system_start(ctx)'
    ```
+
+---
+
+> *Coherent architecture for a small, REPL-driven, procedural Bun application. Not a generally superior TypeScript architecture — a deliberately biased one. Core strength: operational simplicity. Core weakness: typed-but-global service locator via `ctx` and `ctx.fns`.*
+>
+> — OpenAI Codex (GPT-5.4), architectural review
