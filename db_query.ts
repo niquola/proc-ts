@@ -1,8 +1,4 @@
-export default function db_query(ctx: any, sql: string, params: any[] = []) {
-  ctx.lastQuery = sql;
-  const stmt = ctx.db.prepare(sql);
-  if (sql.trim().toUpperCase().startsWith("SELECT")) {
-    return stmt.all(...params);
-  }
-  return stmt.run(...params);
+export default function db_query<T = any>(ctx: Ctx, sql: string, params: any[] = []): T[] {
+  const stmt = ctx.db!.prepare(sql);
+  return stmt.all(...params) as T[];
 }

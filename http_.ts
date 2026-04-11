@@ -1,4 +1,4 @@
-export default async function http_(ctx: any, session: any, request: any) {
+export default async function http_(ctx: Ctx, session: Session, request: Req) {
   const source = await Bun.file("README.md").text();
   // strip frontmatter
   const md = source.replace(/^---[\s\S]*?---\n/, "");

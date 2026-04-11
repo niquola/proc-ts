@@ -1,3 +1,3 @@
-export default function http_health(ctx: any, session: any, request: any) {
-  return Response.json({ status: "ok", counter: ctx.counter || 0 });
+export default function http_health(ctx: Ctx, session: Session, request: Req) {
+  return Response.json({ status: "ok", counter: ctx.state.counter || 0 });
 }

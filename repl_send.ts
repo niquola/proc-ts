@@ -1,13 +1,13 @@
 const [op, arg] = process.argv.slice(2);
 
 if (!op) {
-  console.log("Usage: bun repl_send.ts reload_all | reload <fn_name> | eval '<code>'");
+  console.log("Usage: bun repl_send.ts load_all | reload <fn_name> | eval '<code>'");
   process.exit(1);
 }
 
 let body: any;
-if (op === "reload_all") {
-  body = { op: "reload_all" };
+if (op === "load_all") {
+  body = { op: "load_all" };
 } else if (op === "reload") {
   if (!arg) { console.log("reload requires fn_name"); process.exit(1); }
   body = { op: "reload", path: `./${arg}.ts` };

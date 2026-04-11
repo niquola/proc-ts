@@ -1,7 +1,5 @@
-import server_stop from "./server_stop";
-import db_stop from "./db_stop";
-
-export default function system_stop(ctx: any) {
+export default function system_stop(ctx: Ctx) {
+  const { server_stop, db_stop } = ctx.fns;
   server_stop(ctx);
   db_stop(ctx);
   return "system stopped";

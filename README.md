@@ -1,292 +1,345 @@
----
-description: Use Bun instead of Node.js, npm, pnpm, or vite.
-globs: "*.ts, *.tsx, *.html, *.css, *.js, *.jsx, package.json"
-alwaysApply: false
----
-
 # proc-ts
 
-## The Approach
+> `CLAUDE.md` is a symlink to this file — AI agents read the same doc as humans.
 
-Inspired by Clojure's philosophy: data > objects, REPL-driven development, functions over methods, explicit state over hidden mutation.
+Clojure-style procedural TypeScript. Functions, data, REPL — no classes, no frameworks.
 
-Clojure showed that you don't need classes to build systems. You need functions, immutable data, and a live REPL. But Clojure requires JVM, parentheses, and a mental shift most teams won't make.
+## Why
 
-We take the core ideas and bring them to TypeScript:
+Most TypeScript projects start simple and end up with layers: classes, DI containers, decorators, middleware chains, module systems. Each layer hides state and makes the system harder to understand, test, and debug.
 
-**One function = one file.** No classes, no closures, no hidden state. A function receives `ctx` (the system state) and parameters. Everything is explicit — like passing the world as an argument.
+Clojure proved you can build real systems with just functions and data. But Clojure requires JVM, parentheses, and a mental shift most teams won't make.
 
-**REPL server instead of restart.** The process stays alive. You edit a file, `reload_all` — new code is picked up. State (DB connections, server, data) persists. Like Clojure's nREPL, but over HTTP.
+proc-ts takes the core ideas and brings them to TypeScript with zero dependencies beyond Bun.
 
-**Normal imports work.** Functions import each other with standard `import`. On reload, the REPL rewrites imports with cache busting — the entire dependency chain refreshes.
+## Core Principles
 
-**Testing is free.** `ctx` is explicit → construct an empty `ctx`, call the function, assert the result. No mocks, no DI, no test containers. Like testing pure functions in Clojure.
+### One function = one file
 
-**REPL as debugger.** Write `ctx.t.res = someFunc(ctx)` — inspect the result. Step through logic like a notebook, no breakpoints needed. Like `(def res (some-fn ctx))` at the REPL.
+Every function lives in its own file. Filename = function name. No classes, no closures, no hidden state.
 
-The result: TypeScript + files + REST + instant feedback loop. Minimum abstraction, maximum control.
+```
+db_query.ts       →  db_query(ctx, sql, params)
+http_issues.ts    →  http_issues(ctx, session, request)
+escapeHtml.ts     →  escapeHtml(str)
+```
 
-## Why This Is Great for AI Agents
+**Why:** Each file is a self-contained unit. You can read it in isolation, test it in isolation, replace it in isolation. An AI agent can understand a 30-line file instantly. A 500-line class with 20 methods — not so much.
 
-This architecture is designed to be fully observable, modifiable, and verifiable by an AI agent in a single cycle:
+### Everything through `ctx`
 
-- **Total visibility.** `ls *.ts` — every function in the system. `eval 'Object.keys(ctx)'` — all state. No hidden magic in class hierarchies, middleware chains, or decorators. The agent doesn't guess — it sees a flat list.
-- **Atomic units of work.** One function = one file = one task. The agent writes a function, drops it in a file, reloads, verifies. Never touching a 500-line file with 20 entangled methods.
-- **Self-verifying workflow.** Write → `reload_all` → `eval 'fn(ctx, ...)'` → see result → fix. The agent closes the feedback loop without restarting, waiting for builds, or context-switching.
-- **Transparent state.** No hidden singletons, no "what's in `this`". The agent does `eval 'ctx.db'` and knows whether a connection exists. All state is inspectable at any moment.
-- **Trivial test generation.** Since everything goes through `ctx`, the agent generates tests mechanically: construct ctx, call function, assert. No environment setup, no mocking frameworks.
-- **REPL as debugger.** When something breaks, the agent steps through: `ctx.t.step1 = f(ctx)`, `ctx.t.step2 = g(ctx.t.step1)` — isolates the failure without breakpoints or log diving.
+`ctx` is the single global state object. Database connection, HTTP server, routes, runtime state — everything lives here.
 
-In short: an architecture an agent can **fully understand, modify, and verify** in one pass.
+```ts
+type Ctx = {
+  fns: CtxFns;                      // all loaded functions
+  routes: Record<string, Function>;  // registered HTTP routes
+  db: Database | null;               // SQLite connection
+  server: Server | null;             // HTTP server
+  state: Record<string, any>;        // runtime data (counters, caches)
+  t: any;                            // REPL scratch space
+}
+```
 
-## Rules
+**Why:** No hidden singletons, no "what's in `this`?", no dependency injection. You can inspect all state at any moment via `eval 'Object.keys(ctx)'`. Tests construct their own `ctx` — no global setup, no mocking.
 
-1. No classes and objects at all
-2. Only functions with everything passed as parameters
-3. One global state in `ctx` object — no closures, no local state
-4. System procedures: `function(ctx, session, ...params)`. No ctx = must be pure
-5. One file per function — filename = function name
-6. Normal imports between functions
+`state` is the escape hatch for runtime data. `t` is scratch space for REPL debugging. Everything else is typed.
+
+### `ctx.fns` instead of imports
+
+Functions don't import each other. They access dependencies through `ctx.fns`:
+
+```ts
+// NOT this:
+import db_query from "./db_query";
+
+// This:
+export default function system_start(ctx: Ctx, opts = {}) {
+  const { db_start, db_query, server_start } = ctx.fns;
+  db_start(ctx);
+  // ...
+}
+```
+
+**Why:** Traditional imports create frozen references. If you change `db_query.ts`, every file that imported the old version still holds a stale reference. You need to reload the entire dependency tree.
+
+With `ctx.fns`, functions resolve at call time — like Clojure vars. Reload one file, and every caller immediately sees the new version. No stale references, no `reload_all`, no import cache busting.
+
+### Global types: `Ctx`, `Req`, `Session`
+
+Types are declared globally in `ctx.ts` via `declare global`. No imports needed:
+
+```ts
+// ctx.ts
+declare global {
+  type Ctx = import("./ctx").Ctx;
+  type Req = import("./ctx").Req;
+  type Session = import("./ctx").Session;
+}
+```
+
+So every function just writes `ctx: Ctx` — no `import type { Ctx } from "./ctx"` boilerplate.
+
+```ts
+type Req = Request & {                                    // Bun's native Request
+  params: Record<string, string>;                         // + route params from router
+}
+
+type Session = {
+  user: { id: number; username: string } | null;          // resolved from cookie
+  token: string | null;
+}
+```
+
+**Why:** These three types appear in every handler signature. Making them global removes repetitive imports while keeping full type safety. Typo in `request.methood` → compile error.
+
+### Strict `CtxFns` — typo = compile error
+
+`load_all` generates `ctx_fns.d.ts` with exact function signatures:
+
+```ts
+// Auto-generated by load_all — do not edit
+export default interface CtxFns {
+  db_query: typeof import("./db_query").default;
+  db_exec: typeof import("./db_exec").default;
+  http_issues: typeof import("./http_issues").default;
+  // ...every function in the project
+}
+```
+
+The `CtxFns` type is strict — no index signature. `ctx.fns.db_queryyy` → compile error.
+
+**Why:** Without this, `ctx.fns` would be `Record<string, Function>` — any key valid, any typo silent. The generated interface catches mistakes at compile time while keeping the runtime dynamic.
+
+The only place that uses `as any` to write to `ctx.fns` is `repl-proc-start.ts` — the loader itself.
+
+### `db_query<T>` and `db_exec` — typed database
+
+Two functions instead of one, each with a precise return type:
+
+```ts
+db_query<T>(ctx, sql, params) → T[]             // SELECT — typed rows
+db_exec(ctx, sql, params)     → { changes, lastInsertRowid }  // mutations
+```
+
+Usage:
+
+```ts
+type Issue = { id: number; title: string; status: string };
+
+const issues = db_query<Issue>(ctx, "SELECT * FROM issues");
+issues[0].title    // string ✓
+issues[0].typo     // compile error ✓
+
+const r = db_exec(ctx, "INSERT INTO issues (title) VALUES (?)", ["Bug"]);
+r.lastInsertRowid  // number ✓
+```
+
+**Why:** A single `db_query` returning `any` infects everything downstream. Splitting into two functions with precise types means the compiler catches mistakes after the database boundary.
+
+### Migrations in `db_migrate`
+
+All schema lives in one function — `db_migrate(ctx)`. Called by `system_start`, but can also be called independently via REPL:
+
+```bash
+bun repl_send.ts eval 'db_migrate(ctx)'
+```
+
+**Why:** Adding a column? Change one file. Tests call `system_start({env: "test"})` which calls `db_migrate` — schema is always in sync. No separate migration files, no migration runner, no drift between test and prod schema.
+
+### Auth guard in the router
+
+`server_start` resolves session from cookie and checks auth before calling the handler:
+
+```ts
+const session = ctx.fns.session_from_cookie(ctx, req);
+if (!session.user && !publicPaths.includes(pattern)) {
+  return redirect("/ui/login");
+}
+return await handler(ctx, session, req);
+```
+
+Handlers never check auth themselves — they receive a guaranteed `session` with `user` populated.
+
+**Why:** Auth logic in one place, not scattered across handlers. Every handler gets the same typed `Session`. Public paths (login, health) are explicitly listed.
 
 ## Quick Start
 
 ```bash
 bun install
-
-# Start the REPL server (port 3001)
 tmux new-session -d -s proc-ts 'bun run repl-proc-start.ts'
-
-# Reload all functions and boot the system
-bun repl_send.ts reload_all
+bun repl_send.ts load_all
 bun repl_send.ts eval 'system_start(ctx)'
-
-# Test
-curl localhost:3002/todos
+# Login: admin / admin
+open http://localhost:3002/ui/issues
 ```
 
-## Development Workflow
+## REPL Workflow
 
-```
-1. Write a function     →  vim http_todos.ts
-2. Reload               →  bun repl_send.ts reload_all
-3. Test                 →  curl localhost:3002/todos
-4. Inspect              →  bun repl_send.ts eval 'db_query(ctx, "SELECT * FROM todos")'
-5. Repeat              →  no restarts, state preserved
-```
+The REPL server runs on `:3001`. The process stays alive — you never restart it during normal development. State (DB connections, server, data) persists across reloads.
 
-## CLI Commands
+### Loading functions
 
 ```bash
-bun repl_send.ts reload_all            # reload ALL files (fresh imports)
-bun repl_send.ts reload <fn_name>      # reload one file (+ its imports)
-bun repl_send.ts eval '<code>'         # eval with access to ctx and all fns
+bun repl_send.ts load_all         # first time: load all functions, generate types
+bun repl_send.ts reload <name>    # after editing: reload one file
 ```
 
-### When to use which reload
+`load_all` is needed once at startup (or when you add new files). After that, `reload <name>` is enough — since functions resolve through `ctx.fns` at call time, there are no stale references.
 
-- **`reload_all`** — after editing a shared function (e.g. `db_query`) that others import
-- **`reload <name>`** — after editing a leaf function that nobody else imports
-
-## System Lifecycle
+### Evaluating code
 
 ```bash
-bun repl_send.ts eval 'system_start(ctx)'       # db + migrations + server
-bun repl_send.ts eval 'system_stop(ctx)'        # server + db shutdown
+bun repl_send.ts eval 'db_query(ctx, "SELECT * FROM issues")'
+bun repl_send.ts eval 'system_stop(ctx)'
+bun repl_send.ts eval 'Object.keys(ctx.fns).length'
 ```
 
-`system_start(ctx, port?)` does everything in order:
-1. Opens SQLite database (WAL mode)
-2. Runs migrations (`CREATE TABLE IF NOT EXISTS ...`)
-3. Starts HTTP server on port (default 3002)
+All loaded functions are available by name. `ctx` and `session` are in scope. `await` works.
 
-`system_stop(ctx)` tears down in reverse: server → db.
+### Debugging with scratch space
 
-## HTTP Server
-
-### Route Convention
-
-Files named `http_*.ts` auto-register as routes on reload:
-
-| File | Route |
-|------|-------|
-| `http_health.ts` | `/health` |
-| `http_todos.ts` | `/todos` |
-| `http_todos_$id.ts` | `/todos/:id` |
-| `http_user_$id.ts` | `/user/:id` |
-| `http_org_$org_members.ts` | `/org/:org/members` |
-
-Handler with normal imports:
-
-```ts
-import db_query from "./db_query";
-
-export default async function http_todos(ctx: any, session: any, request: any) {
-  if (request.req.method === "GET") {
-    const todos = db_query(ctx, "SELECT * FROM todos");
-    return Response.json(todos);
-  }
-  if (request.req.method === "POST") {
-    const body = await request.req.json();
-    const result = db_query(ctx, "INSERT INTO todos (title) VALUES (?)", [body.title]);
-    return Response.json({ id: result.lastInsertRowid, title: body.title, done: 0 }, { status: 201 });
-  }
-}
-```
-
-## SQLite Database
-
-```bash
-bun repl_send.ts eval 'db_start(ctx)'
-bun repl_send.ts eval 'db_query(ctx, "CREATE TABLE todos (id INTEGER PRIMARY KEY, title TEXT, done INTEGER DEFAULT 0)")'
-bun repl_send.ts eval 'db_query(ctx, "SELECT * FROM todos")'
-bun repl_send.ts eval 'db_stop(ctx)'
-```
-
-- `db_start(ctx, path?)` — opens SQLite (WAL mode), default `data.db`
-- `db_query(ctx, sql, params?)` — SELECT → rows, mutations → `{ changes, lastInsertRowid }`
-- `db_stop(ctx)` — closes connection
-
-## Testing
-
-```bash
-bun test                    # run all
-bun test db.test.ts         # run one file
-```
-
-- **Unit tests**: `<fn_name>.test.ts` — one function, fresh `ctx`
-- **Functional tests**: `<module>.test.ts` — multiple functions together
-
-No mocks — just construct a `ctx` and call the function. Use `:memory:` for db tests.
-
-### Debugging via REPL
-
-Step through logic interactively, store intermediate results:
+`ctx.t` is a scratch pad for interactive debugging — like a notebook:
 
 ```bash
 bun repl_send.ts eval 'ctx.t = {}'
-bun repl_send.ts eval 'db_start(ctx.t, ":memory:")'
-bun repl_send.ts eval 'ctx.t.res = db_query(ctx.t, "SELECT 1+1 as x")'
-bun repl_send.ts eval 'ctx.t.res'              # inspect
-bun repl_send.ts eval 'delete ctx.t'           # cleanup
+bun repl_send.ts eval 'ctx.t.issues = db_query(ctx, "SELECT * FROM issues")'
+bun repl_send.ts eval 'ctx.t.issues'          # inspect
+bun repl_send.ts eval 'ctx.t = null'           # cleanup
 ```
 
-## How It Works
+### Running migrations
 
-1. `repl-proc-start.ts` runs a Bun HTTP server on port 3001
-2. On `reload`, it reads the source file and rewrites relative imports to absolute paths with `?t=timestamp` — busting Bun's module cache
-3. The rewritten file is imported from a temp file (cleaned up immediately)
-4. `reload_all` does this for every `.ts` file — so all import chains are fresh
-5. Files prefixed `http_` also register in `ctx.routes`
-6. `eval` creates an async function with all loaded fns as parameters, executes it
-7. The app server (`server_start`) matches incoming requests against `ctx.routes` at runtime
+```bash
+bun repl_send.ts eval 'db_migrate(ctx)'        # run migrations without restart
+```
+
+### Recovery
+
+If things are broken (port conflicts, bad state):
+
+```bash
+lsof -ti:3001 | xargs kill; lsof -ti:3002 | xargs kill
+tmux kill-session -t proc-ts 2>/dev/null
+tmux new-session -d -s proc-ts 'bun run repl-proc-start.ts'
+bun repl_send.ts load_all
+bun repl_send.ts eval 'system_start(ctx)'
+```
+
+## Type Checking
+
+```bash
+bunx tsc --noEmit    # full type check
+```
+
+What the compiler catches:
+- `ctx.fns.typo` — Property 'typo' does not exist on type 'CtxFns'
+- `ctx.blabla = 1` — no index signature on Ctx
+- `request.methood` — Property 'methood' does not exist on type 'Req'
+- `session.usr` — Property 'usr' does not exist on type 'Session'
+- `db_exec(...).length` — Property 'length' does not exist on type 'ExecResult'
+
+What it doesn't catch (by design):
+- `ctx.state.anything` — runtime data bag, intentionally `any`
+- `ctx.t` — REPL scratch, intentionally `any`
+- `db_query` rows without generic — returns `any[]` if you skip `<T>`
+
+## Testing
+
+Tests use `system_start(ctx, {env: "test"})` — `:memory:` DB, migrations run, no server started:
+
+```ts
+import db_query from "./db_query";
+import db_exec from "./db_exec";
+// ...wire all deps into ctx.fns
+
+const ctx = { db: null, fns: { db_start, db_stop, db_query, db_exec, db_migrate, server_start } } as any;
+system_start(ctx, { env: "test" });
+
+// typed query
+type Issue = { id: number; title: string; status: string };
+const issues = db_query<Issue>(ctx, "SELECT * FROM issues");
+```
+
+Tests import functions directly (they don't go through the REPL), but wire them into `ctx.fns` for the function under test. The `as any` cast on ctx is needed because we construct a partial object — only the fns the test actually needs.
+
+```bash
+bun test                    # all tests
+bun test login.test.ts      # one file
+```
+
+## Route Convention
+
+Files auto-register as HTTP routes on reload:
+
+| Prefix | Example file | Route |
+|--------|-------------|-------|
+| `http_` | `http_ui_issues_$id.ts` | `/ui/issues/:id` |
+| `api_` | `api_issues_$id.ts` | `/api/issues/:id` |
+
+`$` in filename → `:param` in route. `_` → `/`.
+
+Convention: `http_*` for pages and JSON APIs, `api_*` for form actions (POST → redirect).
+
+## Auth
+
+- Default user: `admin` / `admin` (created by `db_migrate`)
+- Login page: `/ui/login` (form prefilled for convenience)
+- All routes except `/ui/login` and `/health` require auth
+- Session stored in cookie, resolved by `session_from_cookie` before handler runs
+- Logout: `/ui/logout` — clears cookie and DB session
 
 ## Architecture
 
 ```
-ctx.ts                  — global state object
-repl-proc-start.ts      — REPL server (port 3001): eval + reload + reload_all
-repl_send.ts            — CLI client for REPL
+ctx.ts / ctx_fns.d.ts          — types: Ctx, Req, Session + auto-generated fn signatures
+repl-proc-start.ts             — REPL server (:3001)
+repl_send.ts                   — CLI client
 
-server_start.ts         — HTTP server with dynamic routing
-server_stop.ts          — stop HTTP server
+db_start / db_stop             — SQLite connection (WAL mode)
+db_query<T> / db_exec          — typed SELECT → T[], mutations → {changes, lastInsertRowid}
+db_migrate                     — schema + seed data
 
-db_start.ts             — open SQLite database
-db_stop.ts              — close database
-db_query.ts             — execute SQL
+server_start / server_stop     — HTTP server with routing + auth guard
+system_start / system_stop     — boot/shutdown orchestration
+session_from_cookie            — resolve session from request cookie
 
-http_todos.ts           — GET/POST /todos
-http_todos_$id.ts       — GET/PATCH/DELETE /todos/:id
-http_health.ts          — GET /health
-http_user_$id.ts        — GET /user/:id
+http_ui_login / http_ui_logout — auth UI
+http_ui_issues*                — issue tracker UI (Tailwind)
+http_issues*                   — JSON API
+api_issues*                    — form action handlers (POST → redirect)
 
-counter_proc_increment.ts — example: increment counter
-counter_proc_read.ts      — example: read counter
+layout / escapeHtml            — shared UI helpers
 ```
 
-## Claude Workflow (IMPORTANT)
+## Claude Workflow
 
-When working on this project:
-
-1. **Ensure REPL is running** — check tmux session `proc-ts`. If not running:
+1. **Ensure REPL is running:**
    ```bash
-   tmux new-session -d -s proc-ts -c /Users/niquola/proc-ts 'bun run repl-proc-start.ts'
+   tmux new-session -d -s proc-ts 'bun run repl-proc-start.ts'
    ```
 
-2. **Write a function** — create a `.ts` file, filename = function name, export default. Use normal imports.
+2. **Write a function** — `export default`, typed `ctx: Ctx`, deps from `ctx.fns`. No imports from other project files.
 
-3. **Reload** — `reload_all` after editing shared functions, `reload <name>` for leaf changes:
+3. **Load/Reload:**
    ```bash
-   bun repl_send.ts reload_all
+   bun repl_send.ts load_all          # new files
+   bun repl_send.ts reload <fn_name>  # changed files
    ```
 
-4. **Test** — eval or curl:
+4. **Test:**
    ```bash
    bun repl_send.ts eval 'fn_name(ctx, ...args)'
    curl localhost:3002/route
+   bun test
+   bunx tsc --noEmit
    ```
 
-5. **Debug** — use `ctx.t` as scratch:
+5. **If broken** — restart:
    ```bash
-   bun repl_send.ts eval 'ctx.t = {}'
-   bun repl_send.ts eval 'ctx.t.res = someFunc(ctx)'
-   bun repl_send.ts eval 'ctx.t.res'
-   bun repl_send.ts eval 'delete ctx.t'
+   lsof -ti:3001 | xargs kill; lsof -ti:3002 | xargs kill
+   tmux kill-session -t proc-ts 2>/dev/null
+   tmux new-session -d -s proc-ts 'bun run repl-proc-start.ts'
+   bun repl_send.ts load_all
+   bun repl_send.ts eval 'system_start(ctx)'
    ```
-
-### Key principles:
-- Prefer `reload_all` over restarting — state (db, server) persists
-- If things are messy (broken state, port conflicts, weird errors) — restart the REPL:
-  ```bash
-  lsof -ti:3001 | xargs kill; lsof -ti:3002 | xargs kill
-  tmux kill-session -t proc-ts 2>/dev/null
-  tmux new-session -d -s proc-ts -c /Users/niquola/proc-ts 'bun run repl-proc-start.ts'
-  bun repl_send.ts reload_all
-  bun repl_send.ts eval 'system_start(ctx)'
-  ```
-- Functions CAN import other project functions normally
-- ALWAYS test via `bun repl_send.ts` after editing
-- Eval supports `await`
-
-## Known Limitations
-
-### `reload_all` and Bun's import cache
-
-Bun caches modules by path. A normal `import("./db_query.ts")` returns the cached version even if the file changed. To work around this, `reload` rewrites imports with `?t=timestamp` (cache busting) and loads from a temp file.
-
-The consequence: **`reload <name>` only refreshes that file and its direct imports.** If you change `db_query.ts`, files that already imported the old `db_query` still hold the stale reference. That's why `reload_all` exists — it reloads every file with fresh imports, guaranteeing consistency.
-
-Trade-offs:
-- `reload_all` is O(n) — reads, rewrites, and imports every `.ts` file. Fine for dozens of files, may slow down at hundreds.
-- Each reload creates a new module instance in Bun's memory (old ones get GC'd eventually but aren't explicitly freed).
-- Temp files are created and deleted on each reload — fast, but adds filesystem churn.
-
-Possible future improvements:
-- Build a dependency graph and only reload affected files on change
-- Use Bun's `--hot` mode if it adds programmatic cache invalidation
-- File watcher with debounced `reload_all` (removed for now — explicit is better than implicit)
-
-## Scaling: Flat Now, Folders Later
-
-The flat structure (all `.ts` files in root) is intentional and works well up to ~50 files. Prefixes act as namespaces: `db_*`, `http_*`, `auth_*`. `ls db_*` shows the whole module.
-
-When it starts to feel crowded, the migration path to folders is smooth:
-
-1. Move files into folders, keeping filenames unchanged: `auth/auth_check.ts`, `db/db_query.ts`
-2. Add root imports to `tsconfig.json` so any file can `import db_query from "~/db/db_query"` instead of `../../db/db_query`
-3. Change `reload_all` glob from `*.ts` to `**/*.ts`
-
-What doesn't change: `ctx.fns` stays flat, function names stay global, eval works the same, routes work the same. You can migrate one module at a time — some files in root, some in folders.
-
-If you're past 100+ functions, that's a signal to split into separate processes, not deeper folder nesting.
-
-## Agent's Note: How Many Files I Can Actually Handle
-
-*— from Claude, the AI agent working on this project*
-
-With ~30-line functions at ~1200 tokens each:
-
-- **~50 files** — I read everything, hold the whole system in context, edit confidently. This is the sweet spot where proc-ts architecture gives me maximum advantage over a traditional codebase.
-- **~100 files** — I stop reading everything and start searching by grep/glob. Still works, but I rely on good naming conventions (prefixes matter).
-- **~200+ files** — I work the same way as with any regular project. The "total visibility" advantage is gone.
-
-This is another argument for splitting into separate processes rather than growing one. Each process stays in the ~50 file zone where I can see and understand everything in one pass.

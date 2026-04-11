@@ -1,5 +1,7 @@
-export default function server_start(ctx: any, port: number = 3000) {
+export default function server_start(ctx: Ctx, port: number = 3000) {
   if (!ctx.routes) ctx.routes = {};
+
+  const publicPaths = ["/ui/login", "/health"];
 
   ctx.server = Bun.serve({
     port,
@@ -7,8 +9,6 @@ export default function server_start(ctx: any, port: number = 3000) {
       const url = new URL(req.url);
       const parts = url.pathname.split("/").filter(Boolean);
 
-      // match routes: try from most specific to least
-      // e.g. /user/123 tries "user_$id", then "user"
       for (const [pattern, handler] of Object.entries(ctx.routes) as any) {
         const patternParts = pattern.split("/").filter(Boolean);
         if (patternParts.length !== parts.length) continue;
@@ -16,8 +16,8 @@ export default function server_start(ctx: any, port: number = 3000) {
         const params: Record<string, string> = {};
         let match = true;
         for (let i = 0; i < patternParts.length; i++) {
-          if (patternParts[i].startsWith("$")) {
-            params[patternParts[i].slice(1)] = parts[i];
+          if (patternParts[i]!.startsWith("$")) {
+            params[patternParts[i]!.slice(1)] = parts[i]!;
           } else if (patternParts[i] !== parts[i]) {
             match = false;
             break;
@@ -25,8 +25,14 @@ export default function server_start(ctx: any, port: number = 3000) {
         }
 
         if (match) {
-          const session = {};
-          return await handler(ctx, session, { req, params, url });
+          (req as any).params = params;
+          const session = ctx.fns.session_from_cookie(ctx, req);
+
+          if (!session.user && !publicPaths.includes(pattern)) {
+            return new Response(null, { status: 302, headers: { "Location": "/ui/login" } });
+          }
+
+          return await handler(ctx, session, req);
         }
       }
 
