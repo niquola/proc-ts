@@ -353,3 +353,7 @@ layout / escapeHtml            — shared UI helpers
 > *Coherent architecture for a small, REPL-driven, procedural Bun application. Not a generally superior TypeScript architecture — a deliberately biased one. Core strength: operational simplicity. Core weakness: typed-but-global service locator via `ctx` and `ctx.fns`.*
 >
 > — OpenAI Codex (GPT-5.4), architectural review
+
+> *Legitimate experiment in minimalist architecture that delivers on its core promise: fast feedback loops with maximum transparency, at small scale. The strongest genuine use case: an AI agent rapidly prototyping a CRUD app with instant verification via REPL eval. For that specific workflow, this is better than spinning up a Next.js project.*
+>
+> — Claude Opus 4.6, independent architectural review
