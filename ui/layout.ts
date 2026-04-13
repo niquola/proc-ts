@@ -1,5 +1,5 @@
 export default async function layout(ctx: Ctx, session: Session, request: Req, body: string) {
-  const { escapeHtml } = ctx.fns;
+  const { escapeHtml } = ctx.ui;
   const userNav = session.user
     ? `<span class="text-sm text-gray-600">${escapeHtml(session.user.username)}</span>
        <a href="/ui/logout" class="text-sm text-red-600 hover:underline">Logout</a>`

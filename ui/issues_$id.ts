@@ -1,15 +1,16 @@
-export default async function http_ui_issues_$id(ctx: Ctx, session: Session, request: Req) {
-  const { db_query, layout, escapeHtml } = ctx.fns;
+export default async function issues_$id(ctx: Ctx, session: Session, request: Req) {
+  const { query } = ctx.db;
+  const { layout, escapeHtml } = ctx.ui;
   const id = parseInt(request.params.id);
 
   if (request.method === "GET") {
-    const issues = db_query(ctx, "SELECT * FROM issues WHERE id = ?", [id]);
+    const issues = query(ctx, "SELECT * FROM issues WHERE id = ?", [id]);
     if (issues.length === 0) {
       return new Response("Not found", { status: 404 });
     }
 
     const issue = issues[0];
-    const comments = db_query(ctx, "SELECT * FROM comments WHERE issue_id = ? ORDER BY created_at ASC", [id]);
+    const comments = query(ctx, "SELECT * FROM comments WHERE issue_id = ? ORDER BY created_at ASC", [id]);
 
     const statusClass = (s: string) =>
       s === 'open' ? 'bg-green-100 text-green-800' :

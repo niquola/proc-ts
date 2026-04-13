@@ -1,5 +1,5 @@
 export default async function api_issues_$id(ctx: Ctx, session: Session, request: Req) {
-  const { db_exec } = ctx.fns;
+  const { exec } = ctx.db;
   const id = parseInt(request.params.id);
 
   if (request.method === "POST") {
@@ -19,7 +19,7 @@ export default async function api_issues_$id(ctx: Ctx, session: Session, request
 
     if (updates.length > 0) {
       params.push(id);
-      db_exec(ctx, `UPDATE issues SET ${updates.join(", ")} WHERE id = ?`, params);
+      exec(ctx, `UPDATE issues SET ${updates.join(", ")} WHERE id = ?`, params);
     }
 
     return new Response(null, {

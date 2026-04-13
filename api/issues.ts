@@ -1,5 +1,5 @@
 export default async function api_issues(ctx: Ctx, session: Session, request: Req) {
-  const { db_query, db_exec } = ctx.fns;
+  const { query, exec } = ctx.db;
   if (request.method === "POST") {
     const formData = await request.formData();
     const title = formData.get("title");
@@ -10,7 +10,7 @@ export default async function api_issues(ctx: Ctx, session: Session, request: Re
       return Response.json({ error: "title is required" }, { status: 400 });
     }
 
-    const result = db_exec(ctx, "INSERT INTO issues (title, description, status) VALUES (?, ?, ?)", [
+    const result = exec(ctx, "INSERT INTO issues (title, description, status) VALUES (?, ?, ?)", [
       typeof title === "string" ? title.trim() : title,
       description,
       status

@@ -1,9 +1,9 @@
-export default function server_start(ctx: Ctx, port: number = 3000) {
+export default function start(ctx: Ctx, port: number = 3000) {
   if (!ctx.routes) ctx.routes = {};
 
   const publicPaths = ["/ui/login", "/health"];
 
-  ctx.server = Bun.serve({
+  ctx.state[__ns] = Bun.serve({
     port,
     async fetch(req) {
       const url = new URL(req.url);
@@ -26,7 +26,7 @@ export default function server_start(ctx: Ctx, port: number = 3000) {
 
         if (match) {
           (req as any).params = params;
-          const session = ctx.fns.session_from_cookie(ctx, req);
+          const session = ctx.auth.session_from_cookie(ctx, req);
 
           if (!session.user && !publicPaths.includes(pattern)) {
             return new Response(null, { status: 302, headers: { "Location": "/ui/login" } });
@@ -40,5 +40,5 @@ export default function server_start(ctx: Ctx, port: number = 3000) {
     },
   });
 
-  return `server started on port ${ctx.server.port}`;
+  return `server started on port ${ctx.state[__ns].port}`;
 }

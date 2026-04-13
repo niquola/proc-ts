@@ -1,5 +1,5 @@
 export default async function api_issues_$id_status(ctx: Ctx, session: Session, request: Req) {
-  const { db_exec } = ctx.fns;
+  const { exec } = ctx.db;
   const id = parseInt(request.params.id);
 
   if (request.method === "POST") {
@@ -7,7 +7,7 @@ export default async function api_issues_$id_status(ctx: Ctx, session: Session, 
     const status = formData.get("status");
 
     if (status) {
-      db_exec(ctx, "UPDATE issues SET status = ? WHERE id = ?", [status, id]);
+      exec(ctx, "UPDATE issues SET status = ? WHERE id = ?", [status, id]);
     }
 
     return new Response(null, {

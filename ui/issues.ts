@@ -1,7 +1,8 @@
-export default async function http_ui_issues(ctx: Ctx, session: Session, request: Req) {
-  const { db_query, layout, escapeHtml } = ctx.fns;
+export default async function issues(ctx: Ctx, session: Session, request: Req) {
+  const { query } = ctx.db;
+  const { layout, escapeHtml } = ctx.ui;
 
-  const issues = db_query(ctx, "SELECT * FROM issues ORDER BY id DESC");
+  const issues = query(ctx, "SELECT * FROM issues ORDER BY id DESC");
 
   const body = `
     <div class="flex items-center justify-between mb-6">

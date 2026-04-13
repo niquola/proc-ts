@@ -1,90 +1,164 @@
-import { resolve } from "path";
+import { resolve, dirname, basename } from "path";
 import { Glob } from "bun";
 import ctx from "./ctx";
 
 const session: any = {};
 const projectDir = resolve(".");
-const skip = new Set(["ctx.ts", "repl-proc-start.ts", "repl_send.ts", "ctx_fns.d.ts"]);
 
-function extractName(path: string): string {
-  const file = path.split("/").pop() || "";
-  return file.replace(/\.ts$/, "");
-}
+// Load a single file: inject __ns/__name, import, register in ctx[ns][name]
+async function loadFile(filePath: string) {
+  const abs = resolve(projectDir, filePath);
+  const source = await Bun.file(abs).text();
 
-function registerRoute(name: string, handler: Function) {
-  if (!ctx.routes) ctx.routes = {};
-  let pattern: string;
-  if (name.startsWith("http_")) {
-    // http_ui_issues_$id -> /ui/issues/$id
-    pattern = "/" + name.slice(5).replace(/_/g, "/");
-  } else if (name.startsWith("api_")) {
-    // api_issues_$id -> /api/issues/$id
-    pattern = "/" + name.replace(/_/g, "/");
+  // Determine namespace and function name from path
+  const parts = filePath.replace(/\.ts$/, "").split("/");
+  let ns: string, name: string;
+  if (parts.length >= 2) {
+    ns = parts[0];
+    name = parts.slice(1).join("_");
   } else {
-    pattern = "/" + name.replace(/_/g, "/");
+    ns = "";
+    name = parts[0];
   }
-  ctx.routes[pattern] = handler;
-  return pattern;
+
+  // Inject __ns and __name constants
+  const injected = `const __ns = "${ns}";\nconst __name = "${name}";\n${source}`;
+  const tmpPath = `${abs}.tmp.ts`;
+  await Bun.write(tmpPath, injected);
+  const mod = await import(`${tmpPath}?t=${Date.now()}`);
+  await Bun.$`rm -f ${tmpPath}`.quiet();
+
+  if (!mod.default) return null;
+
+  // Register in ctx[ns][name]
+  if (ns) {
+    if (!(ctx as any)[ns]) (ctx as any)[ns] = {};
+    (ctx as any)[ns][name] = mod.default;
+  }
+
+  // Register routes
+  if (!ctx.routes) ctx.routes = {};
+  const fullName = ns ? `${ns}_${name}` : name;
+
+  if (ns === "ui" || ns === "issues" || ns === "misc") {
+    // ui/issues.ts → /ui/issues, ui/issues_$id.ts → /ui/issues/$id
+    // issues/http.ts → /issues, issues/http_$id.ts → /issues/$id
+    // misc/http_.ts → /, misc/http_health.ts → /health
+    let routeName: string;
+    if (ns === "issues") {
+      routeName = name.startsWith("http") ? name.replace(/^http_?/, "") : null as any;
+      if (routeName !== null) {
+        const pattern = routeName ? "/" + ns + "/" + routeName.replace(/_/g, "/") : "/" + ns;
+        ctx.routes[pattern] = mod.default;
+      }
+    } else if (ns === "ui") {
+      if (name === "index") {
+        ctx.routes["/ui"] = mod.default;
+      } else if (name !== "layout" && name !== "escapeHtml") {
+        const pattern = "/ui/" + name.replace(/_/g, "/");
+        ctx.routes[pattern] = mod.default;
+      }
+    } else if (ns === "misc") {
+      if (name === "http_") {
+        ctx.routes["/"] = mod.default;
+      } else if (name.startsWith("http_")) {
+        const pattern = "/" + name.slice(5).replace(/_/g, "/");
+        ctx.routes[pattern] = mod.default;
+      }
+    }
+  }
+
+  if (ns === "api") {
+    // api/issues.ts → /api/issues, api/issues_$id.ts → /api/issues/$id
+    const pattern = "/api/" + name.replace(/_/g, "/");
+    ctx.routes[pattern] = mod.default;
+  }
+
+  return { ns, name, fullName, path: abs };
 }
 
 async function handleReload(path: string) {
-  const abs = resolve(path.endsWith(".ts") ? path : path + ".ts");
-  const mod = await import(`${abs}?t=${Date.now()}`);
-  const name = extractName(path);
-  (ctx.fns as any)[name] = mod.default;
-
-  if (name.startsWith("http_")) {
-    const pattern = registerRoute(name, mod.default);
-    return { ok: true, name, route: pattern, path: abs };
-  }
-  if (name.startsWith("api_")) {
-    const pattern = registerRoute(name, mod.default);
-    return { ok: true, name, route: pattern, path: abs };
-  }
-
-  return { ok: true, name, path: abs };
+  const file = path.endsWith(".ts") ? path : path + ".ts";
+  const result = await loadFile(file);
+  if (!result) return { error: "no default export" };
+  return { ok: true, ...result };
 }
 
 async function handleEval(code: string) {
-  const names = Object.keys(ctx.fns);
-  const values = Object.values(ctx.fns);
+  // Flatten all namespace functions + ctx into scope
+  const names: string[] = [];
+  const values: any[] = [];
+
+  for (const [ns, fns] of Object.entries(ctx as any)) {
+    if (typeof fns !== "object" || fns === null || ns === "state" || ns === "routes" || ns === "t") continue;
+    // Namespace object itself: db, ui, api, system, etc.
+    if (!names.includes(ns)) { names.push(ns); values.push(fns); }
+    for (const [name, fn] of Object.entries(fns as any)) {
+      if (typeof fn !== "function") continue;
+      // Available as both ns_name and just name (for convenience)
+      const fullName = `${ns}_${name}`;
+      if (!names.includes(fullName)) { names.push(fullName); values.push(fn); }
+      if (!names.includes(name)) { names.push(name); values.push(fn); }
+    }
+  }
+
   const fn = new Function(...names, "ctx", "session", `return (async () => (${code}))()`);
   const result = await fn(...values, ctx, session);
   return { result };
 }
 
 async function handleLoadAll() {
-  const glob = new Glob("*.ts");
+  const glob = new Glob("**/*.ts");
   const loaded: string[] = [];
+  const skip = new Set(["ctx.ts", "repl-proc-start.ts", "repl_send.ts"]);
+
   for await (const file of glob.scan(projectDir)) {
-    if (file.endsWith(".test.ts") || file.endsWith(".tmp.ts") || file.endsWith(".d.ts") || skip.has(file)) continue;
+    if (file.endsWith(".test.ts") || file.endsWith(".tmp.ts") || file.endsWith(".d.ts")) continue;
+    if (skip.has(file)) continue;
+    if (file.startsWith("node_modules/")) continue;
+    // Only load files inside folders (namespaces)
+    if (!file.includes("/")) continue;
+
     try {
-      const abs = resolve(projectDir, file);
-      const mod = await import(`${abs}?t=${Date.now()}`);
-      if (!mod.default) continue;
-      const name = file.replace(/\.ts$/, "");
-      (ctx.fns as any)[name] = mod.default;
-      if (name.startsWith("http_") || name.startsWith("api_")) {
-        registerRoute(name, mod.default);
-      }
-      loaded.push(name);
-    } catch {}
+      const result = await loadFile(file);
+      if (result) loaded.push(`${result.ns}.${result.name}`);
+    } catch (e: any) {
+      console.error(`Failed to load ${file}: ${e.message}`);
+    }
   }
-  await genCtxFnsDts();
+
+  await genTypes();
   return { loaded, count: loaded.length };
 }
 
-async function genCtxFnsDts() {
-  const glob = new Glob("*.ts");
-  const lines: string[] = [];
+async function genTypes() {
+  const glob = new Glob("**/*.ts");
+  const skip = new Set(["ctx.ts", "repl-proc-start.ts", "repl_send.ts"]);
+  const namespaces: Record<string, string[]> = {};
+
   for await (const file of glob.scan(projectDir)) {
-    if (file.endsWith(".test.ts") || file.endsWith(".tmp.ts") || file.endsWith(".d.ts") || skip.has(file)) continue;
-    const name = file.replace(/\.ts$/, "");
-    lines.push(`  ${name}: typeof import("./${name}").default;`);
+    if (file.endsWith(".test.ts") || file.endsWith(".tmp.ts") || file.endsWith(".d.ts")) continue;
+    if (skip.has(file)) continue;
+    if (file.startsWith("node_modules/")) continue;
+    if (!file.includes("/")) continue;
+
+    const parts = file.replace(/\.ts$/, "").split("/");
+    const ns = parts[0];
+    const name = parts.slice(1).join("_");
+    if (!namespaces[ns]) namespaces[ns] = [];
+    namespaces[ns].push(`    ${name}: typeof import("./${file.replace(/\.ts$/, "")}").default;`);
   }
-  lines.sort();
-  const content = `// Auto-generated by load_all — do not edit\nexport default interface CtxFns {\n${lines.join("\n")}\n}\n`;
-  await Bun.write(resolve(projectDir, "ctx_fns.d.ts"), content);
+
+  const lines: string[] = [];
+  for (const [ns, members] of Object.entries(namespaces).sort()) {
+    members.sort();
+    lines.push(`  ${ns}: {`);
+    lines.push(...members);
+    lines.push(`  };`);
+  }
+
+  const content = `// Auto-generated by load_all — do not edit\nexport default interface CtxNs {\n${lines.join("\n")}\n}\n`;
+  await Bun.write(resolve(projectDir, "ctx_ns.d.ts"), content);
 }
 
 const server = Bun.serve({

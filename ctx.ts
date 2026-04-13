@@ -1,13 +1,10 @@
 import type { Database } from "bun:sqlite";
 import type { Server } from "bun";
 
-export type CtxFns = import("./ctx_fns").default;
+export type CtxNs = import("./ctx_ns").default;
 
-export type Ctx = {
-  fns: CtxFns;
+export type Ctx = CtxNs & {
   routes: Record<string, Function>;
-  db: Database | null;
-  server: Server<any> | null;
   state: Record<string, any>;
   t: any;
 }
@@ -15,7 +12,6 @@ export type Ctx = {
 export type Req = Request & {
   params: Record<string, string>;
 }
-
 
 export type Session = {
   user: { id: number; username: string } | null;
@@ -26,7 +22,9 @@ declare global {
   type Ctx = import("./ctx").Ctx;
   type Req = import("./ctx").Req;
   type Session = import("./ctx").Session;
+  const __ns: string;
+  const __name: string;
 }
 
-const ctx: Ctx = { fns: {} as CtxFns, routes: {}, db: null, server: null, state: {}, t: null };
+const ctx: Ctx = { routes: {}, state: {}, t: null } as Ctx;
 export default ctx;

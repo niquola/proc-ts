@@ -1,8 +1,6 @@
-export default function http_ui_logout(ctx: Ctx, session: Session, request: Req) {
-  const { db_exec } = ctx.fns;
-
+export default function logout(ctx: Ctx, session: Session, request: Req) {
   if (session.token) {
-    db_exec(ctx, "DELETE FROM sessions WHERE token = ?", [session.token]);
+    ctx.db.exec(ctx, "DELETE FROM sessions WHERE token = ?", [session.token]);
   }
 
   return new Response(null, {

@@ -1,5 +1,6 @@
-export default async function http_ui_login(ctx: Ctx, session: Session, request: Req) {
-  const { db_query, db_exec, layout, escapeHtml } = ctx.fns;
+export default async function login(ctx: Ctx, session: Session, request: Req) {
+  const { query, exec } = ctx.db;
+  const { layout } = ctx.ui;
 
   if (request.method === "POST") {
     const formData = await request.formData();
@@ -12,15 +13,15 @@ export default async function http_ui_login(ctx: Ctx, session: Session, request:
     }
 
     if (action === "register") {
-      const existing = db_query(ctx, "SELECT id FROM users WHERE username = ?", [username]);
+      const existing = query(ctx, "SELECT id FROM users WHERE username = ?", [username]);
       if (existing.length > 0) {
         return renderForm(ctx, session, request, "Username already taken");
       }
       const hash = await Bun.password.hash(password);
-      db_exec(ctx, "INSERT INTO users (username, password_hash) VALUES (?, ?)", [username, hash]);
+      exec(ctx, "INSERT INTO users (username, password_hash) VALUES (?, ?)", [username, hash]);
     }
 
-    const users = db_query(ctx, "SELECT * FROM users WHERE username = ?", [username]);
+    const users = query(ctx, "SELECT * FROM users WHERE username = ?", [username]);
     if (users.length === 0) {
       return renderForm(ctx, session, request, "Invalid credentials");
     }
@@ -31,7 +32,7 @@ export default async function http_ui_login(ctx: Ctx, session: Session, request:
     }
 
     const token = crypto.randomUUID();
-    db_exec(ctx, "INSERT INTO sessions (token, user_id) VALUES (?, ?)", [token, users[0].id]);
+    exec(ctx, "INSERT INTO sessions (token, user_id) VALUES (?, ?)", [token, users[0].id]);
 
     return new Response(null, {
       status: 302,
@@ -50,7 +51,7 @@ export default async function http_ui_login(ctx: Ctx, session: Session, request:
 }
 
 async function renderForm(ctx: Ctx, session: Session, request: Req, error: string | null) {
-  const { layout } = ctx.fns;
+  const { layout } = ctx.ui;
 
   const body = `
     <h1 class="text-2xl font-bold mb-6">Login</h1>
