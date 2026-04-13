@@ -1,6 +1,6 @@
 export default function stop(ctx: Ctx) {
-  if (!ctx.state[__ns]) return "no db open";
-  ctx.state[__ns].close();
-  ctx.state[__ns] = null;
+  if (!ctx.state.db) return "no db open";
+  ctx.state.db.close();
+  ctx.state.db = null;
   return "db closed";
 }

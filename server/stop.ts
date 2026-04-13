@@ -1,6 +1,6 @@
 export default function stop(ctx: Ctx) {
-  if (!ctx.state[__ns]) return "no server running";
-  ctx.state[__ns].stop();
-  ctx.state[__ns] = null;
+  if (!ctx.state.server) return "no server running";
+  ctx.state.server.stop();
+  ctx.state.server = null;
   return "server stopped";
 }

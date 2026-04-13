@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import counter_proc_read from "./counter_proc_read";
+import counter_proc_read from "./misc/counter_proc_read";
 
 test("returns 0 when no counter", () => {
   const ctx = { state: {} } as any;

@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import counter_proc_increment from "./counter_proc_increment";
+import counter_proc_increment from "./misc/counter_proc_increment";
 
 test("increments counter from 0", () => {
   const ctx = { state: {} } as any;

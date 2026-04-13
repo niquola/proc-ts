@@ -3,7 +3,7 @@ export default function start(ctx: Ctx, port: number = 3000) {
 
   const publicPaths = ["/ui/login", "/health"];
 
-  ctx.state[__ns] = Bun.serve({
+  ctx.state.server = Bun.serve({
     port,
     async fetch(req) {
       const url = new URL(req.url);
@@ -40,5 +40,5 @@ export default function start(ctx: Ctx, port: number = 3000) {
     },
   });
 
-  return `server started on port ${ctx.state[__ns].port}`;
+  return `server started on port ${ctx.state.server.port}`;
 }

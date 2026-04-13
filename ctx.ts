@@ -22,8 +22,8 @@ declare global {
   type Ctx = import("./ctx").Ctx;
   type Req = import("./ctx").Req;
   type Session = import("./ctx").Session;
-  const __ns: string;
-  const __name: string;
+  var __ns: string;
+  var __name: string;
 }
 
 const ctx: Ctx = { routes: {}, state: {}, t: null } as Ctx;
