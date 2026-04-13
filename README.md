@@ -18,71 +18,79 @@ Inspired by Clojure: functions over methods, data over objects, REPL over restar
 
 ## Core Principles
 
-### One function = one file
+### One function = one file, folder = namespace
 
-Every function lives in its own file. Filename = function name. No classes, no closures, no hidden state.
+Every function lives in its own file inside a namespace folder. `db/query.ts` → `ctx.db.query`. No classes, no closures, no hidden state.
 
 ```
-db_query.ts       →  db_query(ctx, sql, params)
-http_issues.ts    →  http_issues(ctx, session, request)
-escapeHtml.ts     →  escapeHtml(str)
+db/
+  start.ts          → ctx.db.start(ctx, path)
+  stop.ts           → ctx.db.stop(ctx)
+  query.ts          → ctx.db.query<T>(ctx, sql, params)
+  exec.ts           → ctx.db.exec(ctx, sql, params)
+  migrate.ts        → ctx.db.migrate(ctx)
+
+ui/
+  layout.ts         → ctx.ui.layout(ctx, session, req, body)
+  login.ts          → ctx.ui.login(ctx, session, req)
+  issues.ts         → ctx.ui.issues(ctx, session, req)
+
+system/
+  start.ts          → ctx.system.start(ctx, opts)
+  stop.ts           → ctx.system.stop(ctx)
 ```
 
-**Why:** Each file is a self-contained unit. You can read it in isolation, test it in isolation, replace it in isolation. An AI agent can understand a 30-line file instantly. A 500-line class with 20 methods — not so much.
+**Why:** `ls db/` shows the entire database module. Each file is a self-contained unit. An AI agent can understand a 30-line file instantly. Namespaces give structure without import boilerplate.
 
 ### Everything through `ctx`
 
-`ctx` is the single global state object. Database connection, HTTP server, routes, runtime state — everything lives here.
+`ctx` is the single global object. Namespaces hold functions, `state` holds data, `routes` holds the route table.
 
 ```ts
-type Ctx = {
-  fns: CtxFns;                      // all loaded functions
-  routes: Record<string, Function>;  // registered HTTP routes
-  db: Database | null;               // SQLite connection
-  server: Server | null;             // HTTP server
-  state: Record<string, any>;        // runtime data (counters, caches)
-  t: any;                            // REPL scratch space
+type Ctx = CtxNs & {                    // namespaces: db, ui, api, server, system, auth...
+  routes: Record<string, Function>;      // registered HTTP routes
+  state: Record<string, any>;            // runtime data (db conn, server, counters)
+  t: any;                                // REPL scratch space
 }
 ```
 
-**Why:** No hidden singletons, no "what's in `this`?", no dependency injection. You can inspect all state at any moment via `eval 'Object.keys(ctx)'`. Tests construct their own `ctx` — no global setup, no mocking.
+**Why:** No hidden singletons, no "what's in `this`?". You can inspect all state via `eval 'ctx.state'` and all functions via `eval 'Object.keys(ctx.db)'`. Tests construct their own `ctx` — no global setup, no mocking.
 
-`state` is the escape hatch for runtime data. `t` is scratch space for REPL debugging. Everything else is typed.
+### Namespaces instead of imports
 
-### `ctx.fns` instead of imports
-
-Functions don't import each other. They access dependencies through `ctx.fns`:
+Functions don't import each other. They access dependencies through `ctx` namespaces:
 
 ```ts
 // NOT this:
-import db_query from "./db_query";
+import db_query from "../db/query";
 
 // This:
-export default function system_start(ctx: Ctx, opts = {}) {
-  const { db_start, db_query, server_start } = ctx.fns;
-  db_start(ctx);
-  // ...
+export default function start(ctx: Ctx, opts = {}) {
+  ctx.db.start(ctx, opts.env === "test" ? ":memory:" : "data.db");
+  ctx.db.migrate(ctx);
+  if (opts.env !== "test") ctx.server.start(ctx, opts.port || 3002);
 }
 ```
 
-**Why:** Traditional imports create frozen references. If you change `db_query.ts`, every file that imported the old version still holds a stale reference. You need to reload the entire dependency tree.
+**Why:** Traditional imports create frozen references. If you change `db/query.ts`, every file that imported the old version still holds a stale reference. With `ctx.db.query`, functions resolve at call time — like Clojure vars. Reload one file, every caller immediately sees the new version.
 
-With `ctx.fns`, functions resolve at call time — like Clojure vars. Reload one file, and every caller immediately sees the new version. No stale references, no `reload_all`, no import cache busting.
+### State separate from functions
+
+Functions live in namespaces (`ctx.db`, `ctx.ui`). Data lives in `ctx.state`:
+
+```ts
+ctx.db.start(ctx)       // function — opens connection
+ctx.state.db             // data — the Database connection itself
+
+ctx.server.start(ctx)    // function — starts server
+ctx.state.server         // data — the Server instance
+```
+
+**Why:** Clean separation. Inspect all runtime state: `eval 'ctx.state'`. Functions are pure dispatch — they read/write `ctx.state` but don't live there.
 
 ### Global types: `Ctx`, `Req`, `Session`
 
-Types are declared globally in `ctx.ts` via `declare global`. No imports needed:
-
-```ts
-// ctx.ts
-declare global {
-  type Ctx = import("./ctx").Ctx;
-  type Req = import("./ctx").Req;
-  type Session = import("./ctx").Session;
-}
-```
-
-So every function just writes `ctx: Ctx` — no `import type { Ctx } from "./ctx"` boilerplate.
+Types declared globally via `declare global`. No imports needed:
 
 ```ts
 type Req = Request & {                                    // Bun's native Request
@@ -95,77 +103,63 @@ type Session = {
 }
 ```
 
-**Why:** These three types appear in every handler signature. Making them global removes repetitive imports while keeping full type safety. Typo in `request.methood` → compile error.
+**Why:** These types appear in every handler. Global declaration removes boilerplate while keeping full type safety. Typo in `request.methood` → compile error.
 
-### Strict `CtxFns` — typo = compile error
+### Strict `CtxNs` — typo = compile error
 
-`load_all` generates `ctx_fns.d.ts` with exact function signatures:
+`load_all` generates `ctx_ns.d.ts` with nested namespace types:
 
 ```ts
 // Auto-generated by load_all — do not edit
-export default interface CtxFns {
-  db_query: typeof import("./db_query").default;
-  db_exec: typeof import("./db_exec").default;
-  http_issues: typeof import("./http_issues").default;
-  // ...every function in the project
+export default interface CtxNs {
+  db: {
+    query: typeof import("./db/query").default;
+    exec: typeof import("./db/exec").default;
+    // ...
+  };
+  ui: {
+    layout: typeof import("./ui/layout").default;
+    // ...
+  };
 }
 ```
 
-The `CtxFns` type is strict — no index signature. `ctx.fns.db_queryyy` → compile error.
+`ctx.db.queryyy` → compile error. Full autocomplete per namespace.
 
-**Why:** Without this, `ctx.fns` would be `Record<string, Function>` — any key valid, any typo silent. The generated interface catches mistakes at compile time while keeping the runtime dynamic.
-
-The only place that uses `as any` to write to `ctx.fns` is `repl-proc-start.ts` — the loader itself.
-
-### `db_query<T>` and `db_exec` — typed database
-
-Two functions instead of one, each with a precise return type:
-
-```ts
-db_query<T>(ctx, sql, params) → T[]             // SELECT — typed rows
-db_exec(ctx, sql, params)     → { changes, lastInsertRowid }  // mutations
-```
-
-Usage:
+### `db.query<T>` and `db.exec` — typed database
 
 ```ts
 type Issue = { id: number; title: string; status: string };
 
-const issues = db_query<Issue>(ctx, "SELECT * FROM issues");
+const issues = ctx.db.query<Issue>(ctx, "SELECT * FROM issues");
 issues[0].title    // string ✓
 issues[0].typo     // compile error ✓
 
-const r = db_exec(ctx, "INSERT INTO issues (title) VALUES (?)", ["Bug"]);
+const r = ctx.db.exec(ctx, "INSERT INTO issues (title) VALUES (?)", ["Bug"]);
 r.lastInsertRowid  // number ✓
 ```
 
-**Why:** A single `db_query` returning `any` infects everything downstream. Splitting into two functions with precise types means the compiler catches mistakes after the database boundary.
+### Migrations in `db/migrate`
 
-### Migrations in `db_migrate`
-
-All schema lives in one function — `db_migrate(ctx)`. Called by `system_start`, but can also be called independently via REPL:
+All schema in one function. Called by `system.start`, or independently:
 
 ```bash
-bun repl_send.ts eval 'db_migrate(ctx)'
+bun repl_send.ts eval 'db.migrate(ctx)'
 ```
-
-**Why:** Adding a column? Change one file. Tests call `system_start({env: "test"})` which calls `db_migrate` — schema is always in sync. No separate migration files, no migration runner, no drift between test and prod schema.
 
 ### Auth guard in the router
 
-`server_start` resolves session from cookie and checks auth before calling the handler:
+`server/start` resolves session from cookie and checks auth before calling handlers:
 
 ```ts
-const session = ctx.fns.session_from_cookie(ctx, req);
+const session = ctx.auth.session_from_cookie(ctx, req);
 if (!session.user && !publicPaths.includes(pattern)) {
   return redirect("/ui/login");
 }
 return await handler(ctx, session, req);
 ```
 
-Handlers never check auth themselves — they receive a guaranteed `session` with `user` populated.
-
-**Why:** Auth logic in one place, not scattered across handlers. Every handler gets the same typed `Session`. Public paths (login, health) are explicitly listed.
+Handlers receive a guaranteed typed `Session`. Auth logic in one place.
 
 ## Quick Start
 
@@ -173,99 +167,74 @@ Handlers never check auth themselves — they receive a guaranteed `session` wit
 bun install
 tmux new-session -d -s proc-ts 'bun run repl-proc-start.ts'
 bun repl_send.ts load_all
-bun repl_send.ts eval 'system_start(ctx)'
+bun repl_send.ts eval 'system.start(ctx)'
 # Login: admin / admin
 open http://localhost:3002/ui/issues
 ```
 
 ## REPL Workflow
 
-The REPL server runs on `:3001`. The process stays alive — you never restart it during normal development. State (DB connections, server, data) persists across reloads.
+The REPL server runs on `:3001`. Process stays alive — state persists across reloads.
 
 ### Loading functions
 
 ```bash
-bun repl_send.ts load_all         # first time: load all functions, generate types
-bun repl_send.ts reload <name>    # after editing: reload one file
+bun repl_send.ts load_all         # startup: load all, generate types
+bun repl_send.ts reload db/query  # after edit: reload one file
 ```
 
-`load_all` is needed once at startup (or when you add new files). After that, `reload <name>` is enough — since functions resolve through `ctx.fns` at call time, there are no stale references.
+`load_all` once at startup. After that, `reload <path>` is enough — no stale references.
 
 ### Evaluating code
 
 ```bash
-bun repl_send.ts eval 'db_query(ctx, "SELECT * FROM issues")'
-bun repl_send.ts eval 'system_stop(ctx)'
-bun repl_send.ts eval 'Object.keys(ctx.fns).length'
+bun repl_send.ts eval 'db.query(ctx, "SELECT * FROM issues")'
+bun repl_send.ts eval 'system.stop(ctx)'
+bun repl_send.ts eval 'Object.keys(ctx.db)'
 ```
 
-All loaded functions are available by name. `ctx` and `session` are in scope. `await` works.
+All namespaces and functions available by name. `await` works.
 
 ### Debugging with scratch space
 
-`ctx.t` is a scratch pad for interactive debugging — like a notebook:
-
 ```bash
 bun repl_send.ts eval 'ctx.t = {}'
-bun repl_send.ts eval 'ctx.t.issues = db_query(ctx, "SELECT * FROM issues")'
-bun repl_send.ts eval 'ctx.t.issues'          # inspect
-bun repl_send.ts eval 'ctx.t = null'           # cleanup
-```
-
-### Running migrations
-
-```bash
-bun repl_send.ts eval 'db_migrate(ctx)'        # run migrations without restart
+bun repl_send.ts eval 'ctx.t.issues = db.query(ctx, "SELECT * FROM issues")'
+bun repl_send.ts eval 'ctx.t.issues'
+bun repl_send.ts eval 'ctx.t = null'
 ```
 
 ### Recovery
-
-If things are broken (port conflicts, bad state):
 
 ```bash
 lsof -ti:3001 | xargs kill; lsof -ti:3002 | xargs kill
 tmux kill-session -t proc-ts 2>/dev/null
 tmux new-session -d -s proc-ts 'bun run repl-proc-start.ts'
 bun repl_send.ts load_all
-bun repl_send.ts eval 'system_start(ctx)'
+bun repl_send.ts eval 'system.start(ctx)'
 ```
-
-## Type Checking
-
-```bash
-bunx tsc --noEmit    # full type check
-```
-
-What the compiler catches:
-- `ctx.fns.typo` — Property 'typo' does not exist on type 'CtxFns'
-- `ctx.blabla = 1` — no index signature on Ctx
-- `request.methood` — Property 'methood' does not exist on type 'Req'
-- `session.usr` — Property 'usr' does not exist on type 'Session'
-- `db_exec(...).length` — Property 'length' does not exist on type 'ExecResult'
-
-What it doesn't catch (by design):
-- `ctx.state.anything` — runtime data bag, intentionally `any`
-- `ctx.t` — REPL scratch, intentionally `any`
-- `db_query` rows without generic — returns `any[]` if you skip `<T>`
 
 ## Testing
 
-Tests use `system_start(ctx, {env: "test"})` — `:memory:` DB, migrations run, no server started:
+Tests import functions directly and wire namespaces into ctx:
 
 ```ts
-import db_query from "./db_query";
-import db_exec from "./db_exec";
-// ...wire all deps into ctx.fns
+import db_start from "./db/start";
+import db_query from "./db/query";
+import db_exec from "./db/exec";
+import db_migrate from "./db/migrate";
+import system_start from "./system/start";
 
-const ctx = { db: null, fns: { db_start, db_stop, db_query, db_exec, db_migrate, server_start } } as any;
+const ctx = { state: {}, routes: {},
+  db: { start: db_start, stop: db_stop, query: db_query, exec: db_exec, migrate: db_migrate },
+  server: { start: server_start },
+} as any;
 system_start(ctx, { env: "test" });
 
 // typed query
 type Issue = { id: number; title: string; status: string };
 const issues = db_query<Issue>(ctx, "SELECT * FROM issues");
 ```
-
-Tests import functions directly (they don't go through the REPL), but wire them into `ctx.fns` for the function under test. The `as any` cast on ctx is needed because we construct a partial object — only the fns the test actually needs.
 
 ```bash
 bun test                    # all tests
@@ -274,46 +243,56 @@ bun test login.test.ts      # one file
 
 ## Route Convention
 
-Files auto-register as HTTP routes on reload:
+Folders map to route prefixes:
 
-| Prefix | Example file | Route |
-|--------|-------------|-------|
-| `http_` | `http_ui_issues_$id.ts` | `/ui/issues/:id` |
-| `api_` | `api_issues_$id.ts` | `/api/issues/:id` |
+| Folder / file | Route |
+|--------------|-------|
+| `ui/issues.ts` | `/ui/issues` |
+| `ui/issues_$id.ts` | `/ui/issues/:id` |
+| `api/issues.ts` | `/api/issues` |
+| `api/issues_$id.ts` | `/api/issues/:id` |
+| `issues/http.ts` | `/issues` |
 
 `$` in filename → `:param` in route. `_` → `/`.
 
-Convention: `http_*` for pages and JSON APIs, `api_*` for form actions (POST → redirect).
-
 ## Auth
 
-- Default user: `admin` / `admin` (created by `db_migrate`)
-- Login page: `/ui/login` (form prefilled for convenience)
+- Default user: `admin` / `admin` (created by `db/migrate`)
+- Login page: `/ui/login` (form prefilled)
 - All routes except `/ui/login` and `/health` require auth
-- Session stored in cookie, resolved by `session_from_cookie` before handler runs
-- Logout: `/ui/logout` — clears cookie and DB session
+- Session cookie resolved by `auth/session_from_cookie` before handler runs
 
 ## Architecture
 
 ```
-ctx.ts / ctx_fns.d.ts          — types: Ctx, Req, Session + auto-generated fn signatures
+ctx.ts / ctx_ns.d.ts           — types + auto-generated namespace signatures
 repl-proc-start.ts             — REPL server (:3001)
 repl_send.ts                   — CLI client
 
-db_start / db_stop             — SQLite connection (WAL mode)
-db_query<T> / db_exec          — typed SELECT → T[], mutations → {changes, lastInsertRowid}
-db_migrate                     — schema + seed data
+db/
+  start / stop                 — SQLite connection (WAL mode)
+  query<T> / exec              — typed SELECT → T[], mutations → {changes, lastInsertRowid}
+  migrate                      — schema + seed data
 
-server_start / server_stop     — HTTP server with routing + auth guard
-system_start / system_stop     — boot/shutdown orchestration
-session_from_cookie            — resolve session from request cookie
+server/
+  start / stop                 — HTTP server with routing + auth guard
 
-http_ui_login / http_ui_logout — auth UI
-http_ui_issues*                — issue tracker UI (Tailwind)
-http_issues*                   — JSON API
-api_issues*                    — form action handlers (POST → redirect)
+system/
+  start / stop                 — boot/shutdown orchestration
 
-layout / escapeHtml            — shared UI helpers
+auth/
+  session_from_cookie          — resolve session from request cookie
+
+ui/
+  layout / escapeHtml          — shared helpers (Tailwind CDN)
+  login / logout               — auth pages
+  issues / issues_$id / issues_$id_edit — issue tracker UI
+
+api/
+  issues / issues_$id / issues_$id_comments / issues_$id_delete / issues_$id_status
+
+issues/
+  http / http_$id              — JSON API
 ```
 
 ## Claude Workflow
@@ -323,20 +302,19 @@ layout / escapeHtml            — shared UI helpers
    tmux new-session -d -s proc-ts 'bun run repl-proc-start.ts'
    ```
 
-2. **Write a function** — `export default`, typed `ctx: Ctx`, deps from `ctx.fns`. No imports from other project files.
+2. **Write a function** — `export default` in a namespace folder. Use `ctx.ns.fn` for deps. No imports from other project files.
 
 3. **Load/Reload:**
    ```bash
    bun repl_send.ts load_all          # new files
-   bun repl_send.ts reload <fn_name>  # changed files
+   bun repl_send.ts reload db/query   # changed files
    ```
 
 4. **Test:**
    ```bash
-   bun repl_send.ts eval 'fn_name(ctx, ...args)'
+   bun repl_send.ts eval 'db.query(ctx, "SELECT 1")'
    curl localhost:3002/route
    bun test
-   bunx tsc --noEmit
    ```
 
 5. **If broken** — restart:
@@ -345,7 +323,7 @@ layout / escapeHtml            — shared UI helpers
    tmux kill-session -t proc-ts 2>/dev/null
    tmux new-session -d -s proc-ts 'bun run repl-proc-start.ts'
    bun repl_send.ts load_all
-   bun repl_send.ts eval 'system_start(ctx)'
+   bun repl_send.ts eval 'system.start(ctx)'
    ```
 
 ---
