@@ -49,4 +49,9 @@ export default interface CtxNs {
     login: typeof import("./ui/login").default;
     logout: typeof import("./ui/logout").default;
   };
+  state: {
+    db: import("./db/state").State;
+    server: import("./server/state").State;
+    [key: string]: any;
+  };
 }

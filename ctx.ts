@@ -5,7 +5,6 @@ export type CtxNs = import("./ctx_ns").default;
 
 export type Ctx = CtxNs & {
   routes: Record<string, Function>;
-  state: Record<string, any>;
   t: any;
 }
 

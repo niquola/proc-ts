@@ -88,6 +88,31 @@ ctx.state.server         // data — the Server instance
 
 **Why:** Clean separation. Inspect all runtime state: `eval 'ctx.state'`. Functions are pure dispatch — they read/write `ctx.state` but don't live there.
 
+### Typed state by convention
+
+A `state.ts` file in a namespace folder defines the type for that namespace's state:
+
+```ts
+// db/state.ts
+import type { Database } from "bun:sqlite";
+export type State = Database | null;
+
+// server/state.ts
+import type { Server } from "bun";
+export type State = Server<any> | null;
+```
+
+`load_all` picks these up and generates typed `ctx.state`:
+
+```ts
+ctx.state.db          // Database | null  — typed!
+ctx.state.db.prepare  // autocomplete works
+ctx.state.server      // Server | null — typed!
+ctx.state.counter     // any — no state.ts, still works
+```
+
+**Why:** `ctx.state` was `Record<string, any>` — the last big type hole. Now each namespace can opt in to typed state with one file. No state.ts = still `any`, no friction.
+
 ### Global types: `Ctx`, `Req`, `Session`
 
 Types declared globally via `declare global`. No imports needed:
