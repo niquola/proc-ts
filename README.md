@@ -49,7 +49,11 @@ system/
 ```ts
 type Ctx = CtxNs & {                    // namespaces: db, ui, api, server, system, auth...
   routes: Record<string, Function>;      // registered HTTP routes
-  state: Record<string, any>;            // runtime data (db conn, server, counters)
+  state: {                               // runtime data — typed per namespace
+    db: Database | null;                 // from db/state.ts
+    server: Server | null;               // from server/state.ts
+    [key: string]: any;                  // untyped for the rest
+  };
   t: any;                                // REPL scratch space
 }
 ```
@@ -87,6 +91,16 @@ ctx.state.server         // data — the Server instance
 ```
 
 **Why:** Clean separation. Inspect all runtime state: `eval 'ctx.state'`. Functions are pure dispatch — they read/write `ctx.state` but don't live there.
+
+**Rule: modules must not access other modules' state directly.** `ctx.state.db` is private to `db/`. Other modules call `ctx.db.query(ctx, ...)` — never `ctx.state.db.prepare(...)`. This is encapsulation: each module owns its state, exposes functions as the public API.
+
+```ts
+// WRONG — ui/issues.ts reaching into db's state:
+const rows = ctx.state.db.prepare("SELECT ...").all();
+
+// RIGHT — ui/issues.ts calling db's function:
+const rows = ctx.db.query(ctx, "SELECT ...");
+```
 
 ### Typed state by convention
 

@@ -16,7 +16,9 @@ afterEach(() => {
 });
 
 test("start opens database", () => {
-  expect(ctx.state.db).toBeDefined();
+  // verify db works by running a query
+  const rows = query(ctx, "SELECT 1 as x");
+  expect(rows).toEqual([{ x: 1 }]);
 });
 
 test("create table and insert", () => {
@@ -40,5 +42,6 @@ test("select returns typed rows", () => {
 test("stop closes database", () => {
   const result = stop(ctx);
   expect(result).toBe("db closed");
-  expect(ctx.state.db).toBeNull();
+  // verify db is closed — query should throw
+  expect(() => query(ctx, "SELECT 1")).toThrow();
 });
