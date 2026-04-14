@@ -28,7 +28,6 @@ export default interface CtxNs {
     http_: typeof import("./misc/http_").default;
     http_health: typeof import("./misc/http_health").default;
     http_user_$id: typeof import("./misc/http_user_$id").default;
-    index: typeof import("./misc/index").default;
     route_add: typeof import("./misc/route_add").default;
   };
   server: {
