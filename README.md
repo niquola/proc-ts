@@ -12,15 +12,15 @@ We wanted the simplest possible environment for an AI coding agent — no abstra
 
 Most TypeScript projects end up with layers: classes, DI containers, decorators, middleware chains. Each layer hides state and makes it harder for an agent to understand what's happening, verify changes, and move fast.
 
-The foundation is **data and functions**. That's it. An agent reads a 30-line function, changes it, reloads via REPL, calls it, sees the result — all in one cycle, no restarts. Add some **types for guardrails** so the compiler catches typos before runtime. And **always tests** — so changes are verifiable, not just "looks right."
+The foundation is **data and functions**. That's it. An agent reads a 30-line function, changes it — file watcher auto-reloads — calls it via REPL, sees the result. No restarts, no build steps. Add **types for guardrails** so the compiler catches typos before runtime. And **always tests** — so changes are verifiable, not just "looks right."
 
 Inspired by Clojure: functions over methods, data over objects, REPL over restart. But in TypeScript, with Bun, zero dependencies.
 
 ## Core Principles
 
-### One function = one file, folder = namespace
+### 1. One function = one file, folder = namespace
 
-Every function lives in its own file inside a namespace folder. `db/query.ts` → `ctx.db.query`. No classes, no closures, no hidden state.
+Every function lives in its own file inside a namespace folder. `db/query.ts` → `ctx.db.query`.
 
 ```
 db/
@@ -29,38 +29,22 @@ db/
   query.ts          → ctx.db.query<T>(ctx, sql, params)
   exec.ts           → ctx.db.exec(ctx, sql, params)
   migrate.ts        → ctx.db.migrate(ctx)
+  state.ts          → type for ctx.state.db (compile-time only)
 
 ui/
   layout.ts         → ctx.ui.layout(ctx, session, req, body)
   login.ts          → ctx.ui.login(ctx, session, req)
   issues.ts         → ctx.ui.issues(ctx, session, req)
+  _helper.ts        → ctx.ui._helper (internal, NOT a route)
 
 system/
   start.ts          → ctx.system.start(ctx, opts)
   stop.ts           → ctx.system.stop(ctx)
 ```
 
-**Why:** `ls db/` shows the entire database module. Each file is a self-contained unit. An AI agent can understand a 30-line file instantly. Namespaces give structure without import boilerplate.
+**Why:** `ls db/` shows the entire module. Each file is self-contained. An AI agent understands a 30-line file instantly.
 
-### Everything through `ctx`
-
-`ctx` is the single global object. Namespaces hold functions, `state` holds data, `routes` holds the route table.
-
-```ts
-type Ctx = CtxNs & {                    // namespaces: db, ui, api, server, system, auth...
-  routes: Record<string, Function>;      // registered HTTP routes
-  state: {                               // runtime data — typed per namespace
-    db: Database | null;                 // from db/state.ts
-    server: Server | null;               // from server/state.ts
-    [key: string]: any;                  // untyped for the rest
-  };
-  t: any;                                // REPL scratch space
-}
-```
-
-**Why:** No hidden singletons, no "what's in `this`?". You can inspect all state via `eval 'ctx.state'` and all functions via `eval 'Object.keys(ctx.db)'`. Tests construct their own `ctx` — no global setup, no mocking.
-
-### Namespaces instead of imports
+### 2. Namespaces instead of imports
 
 Functions don't import each other. They access dependencies through `ctx` namespaces:
 
@@ -76,100 +60,83 @@ export default function start(ctx: Ctx, opts = {}) {
 }
 ```
 
-**Why:** Traditional imports create frozen references. If you change `db/query.ts`, every file that imported the old version still holds a stale reference. With `ctx.db.query`, functions resolve at call time — like Clojure vars. Reload one file, every caller immediately sees the new version.
+**Why:** Traditional imports create frozen references. Change `db/query.ts` → every importer holds a stale version. With `ctx.db.query`, functions resolve at call time — like Clojure vars. Reload one file, every caller sees the new version instantly.
 
-### State separate from functions
+### 3. State separate from functions, encapsulated per module
 
-Functions live in namespaces (`ctx.db`, `ctx.ui`). Data lives in `ctx.state`:
-
-```ts
-ctx.db.start(ctx)       // function — opens connection
-ctx.state.db             // data — the Database connection itself
-
-ctx.server.start(ctx)    // function — starts server
-ctx.state.server         // data — the Server instance
-```
-
-**Why:** Clean separation. Inspect all runtime state: `eval 'ctx.state'`. Functions are pure dispatch — they read/write `ctx.state` but don't live there.
-
-**Rule: modules must not access other modules' state directly.** `ctx.state.db` is private to `db/`. Other modules call `ctx.db.query(ctx, ...)` — never `ctx.state.db.prepare(...)`. This is encapsulation: each module owns its state, exposes functions as the public API.
+Functions live in namespaces (`ctx.db`, `ctx.ui`). Data lives in `ctx.state`. Each module owns its state — others must not access it directly:
 
 ```ts
+// db/start.ts writes ctx.state.db (private to db/)
+// db/query.ts reads ctx.state.db (private to db/)
+
 // WRONG — ui/issues.ts reaching into db's state:
 const rows = ctx.state.db.prepare("SELECT ...").all();
 
-// RIGHT — ui/issues.ts calling db's function:
+// RIGHT — ui/issues.ts calling db's public API:
 const rows = ctx.db.query(ctx, "SELECT ...");
 ```
 
-### Typed state by convention
+**Why:** Encapsulation without classes. Module owns its state, exposes functions. Inspect all state: `eval 'ctx.state'`.
 
-A `state.ts` file in a namespace folder defines the type for that namespace's state:
+### 4. Everything through `ctx`
 
 ```ts
-// db/state.ts
+type Ctx = CtxNs & {                    // namespaces: db, ui, api, server, system, auth...
+  routes: Record<string, Function>;      // registered HTTP routes
+  env: Record<string, string>;           // environment variables
+  state: {                               // runtime data — typed per namespace
+    db: Database | null;                 // from db/state.ts
+    server: Server | null;               // from server/state.ts
+    [key: string]: any;                  // untyped for the rest
+  };
+  t: any;                                // REPL scratch space
+}
+```
+
+### 5. Typed state by convention
+
+A `state.ts` in a namespace defines the type for `ctx.state.<ns>`:
+
+```ts
+// db/state.ts — compile-time only, not loaded as a function
 import type { Database } from "bun:sqlite";
 export type State = Database | null;
-
-// server/state.ts
-import type { Server } from "bun";
-export type State = Server<any> | null;
 ```
 
-`load_all` picks these up and generates typed `ctx.state`:
+Result: `ctx.state.db` is `Database | null`, not `any`. Autocomplete works.
+
+### 6. Global types: `Ctx`, `Req`, `Session`
+
+Declared globally via `declare global` in `ctx.ts`. No imports needed anywhere:
 
 ```ts
-ctx.state.db          // Database | null  — typed!
-ctx.state.db.prepare  // autocomplete works
-ctx.state.server      // Server | null — typed!
-ctx.state.counter     // any — no state.ts, still works
+type Req = Request & { params: Record<string, string> }  // Bun Request + route params
+type Session = { user: { id: number; username: string } | null; token: string | null }
 ```
 
-**Why:** `ctx.state` was `Record<string, any>` — the last big type hole. Now each namespace can opt in to typed state with one file. No state.ts = still `any`, no friction.
+### 7. Strict `CtxNs` — typo = compile error
 
-### Global types: `Ctx`, `Req`, `Session`
+`load_all` auto-generates `ctx_ns.d.ts` with nested namespace types. `ctx.db.queryyy` → compile error. Full autocomplete per namespace.
 
-Types declared globally via `declare global`. No imports needed:
+### 8. `_type` convention — global domain types
+
+`ns/Thing_type.ts` → `types.ns.Thing` available globally without imports:
 
 ```ts
-type Req = Request & {                                    // Bun's native Request
-  params: Record<string, string>;                         // + route params from router
-}
+// fhir/Patient_type.ts
+export type Patient = { id: string; name: string; birthDate: string };
 
-type Session = {
-  user: { id: number; username: string } | null;          // resolved from cookie
-  token: string | null;
-}
+// Anywhere in the project — no import needed:
+const p: types.fhir.Patient = ...
 ```
 
-**Why:** These types appear in every handler. Global declaration removes boilerplate while keeping full type safety. Typo in `request.methood` → compile error.
+Generated as `declare global { namespace types { ... } }` in `ctx_ns.d.ts`.
 
-### Strict `CtxNs` — typo = compile error
-
-`load_all` generates `ctx_ns.d.ts` with nested namespace types:
-
-```ts
-// Auto-generated by load_all — do not edit
-export default interface CtxNs {
-  db: {
-    query: typeof import("./db/query").default;
-    exec: typeof import("./db/exec").default;
-    // ...
-  };
-  ui: {
-    layout: typeof import("./ui/layout").default;
-    // ...
-  };
-}
-```
-
-`ctx.db.queryyy` → compile error. Full autocomplete per namespace.
-
-### `db.query<T>` and `db.exec` — typed database
+### 9. `db.query<T>` and `db.exec` — typed database
 
 ```ts
 type Issue = { id: number; title: string; status: string };
-
 const issues = ctx.db.query<Issue>(ctx, "SELECT * FROM issues");
 issues[0].title    // string ✓
 issues[0].typo     // compile error ✓
@@ -178,27 +145,32 @@ const r = ctx.db.exec(ctx, "INSERT INTO issues (title) VALUES (?)", ["Bug"]);
 r.lastInsertRowid  // number ✓
 ```
 
-### Migrations in `db/migrate`
+### 10. Migrations in `db/migrate`
 
-All schema in one function. Called by `system.start`, or independently:
+All schema in one function. Called by `system.start`, or independently via REPL:
 
 ```bash
 bun repl_send.ts eval 'db.migrate(ctx)'
 ```
 
-### Auth guard in the router
+Seeds admin user on first run. Tests call `system.start(ctx, {env: "test"})` which runs migrations on `:memory:` DB.
 
-`server/start` resolves session from cookie and checks auth before calling handlers:
+### 11. Auth guard in the router
+
+`server/start` resolves session from cookie and checks auth before calling handlers. Handlers receive a guaranteed typed `Session`. Public paths (`/ui/login`, `/health`) explicitly listed. Auth logic in one place.
+
+### 12. Internal files — `_` prefix
+
+Files starting with `_` (e.g. `ui/_helper.ts`) or ending with `_layout`/`_middleware` are loaded into the namespace but NOT registered as routes. Use for shared helpers, middleware, layouts.
+
+### 13. `ctx.env` — environment variables
+
+`ctx.env` wraps `process.env`. Accessible everywhere, overridable in tests:
 
 ```ts
-const session = ctx.auth.session_from_cookie(ctx, req);
-if (!session.user && !publicPaths.includes(pattern)) {
-  return redirect("/ui/login");
-}
-return await handler(ctx, session, req);
+ctx.env.DATABASE_URL    // read env var
+// In tests: ctx.env.DATABASE_URL = "test-value"
 ```
-
-Handlers receive a guaranteed typed `Session`. Auth logic in one place.
 
 ## Quick Start
 
@@ -213,16 +185,17 @@ open http://localhost:3002/ui/issues
 
 ## REPL Workflow
 
-The REPL server runs on `:3001`. Process stays alive — state persists across reloads.
+The REPL server runs on `:3001` (configurable via `REPL_PORT`). Process stays alive — state persists across reloads.
 
-### Loading functions
+### Live reload
 
+Save a file → file watcher auto-reloads it → WebSocket clients notified. No manual `reload` needed during development.
+
+For manual reload:
 ```bash
-bun repl_send.ts load_all         # startup: load all, generate types
-bun repl_send.ts reload db/query  # after edit: reload one file
+bun repl_send.ts reload db/query   # reload one file
+bun repl_send.ts load_all          # reload all + regenerate types
 ```
-
-`load_all` once at startup. After that, `reload <path>` is enough — no stale references.
 
 ### Evaluating code
 
@@ -233,6 +206,13 @@ bun repl_send.ts eval 'Object.keys(ctx.db)'
 ```
 
 All namespaces and functions available by name. `await` works.
+
+### Dev / test environments
+
+```bash
+bun repl_send.ts eval '...'         # dev (port 3001)
+bun repl_send.ts test eval '...'    # test (port 3003)
+```
 
 ### Debugging with scratch space
 
@@ -255,34 +235,47 @@ bun repl_send.ts eval 'system.start(ctx)'
 
 ## Testing
 
-Tests import functions directly and wire namespaces into ctx:
+`load_all` auto-generates `test_ctx.ts` — zero boilerplate:
 
 ```ts
-import db_start from "./db/start";
-import db_query from "./db/query";
-import db_exec from "./db/exec";
-import db_migrate from "./db/migrate";
-import system_start from "./system/start";
+import test_ctx from "./test_ctx";
 
-const ctx = { state: {}, routes: {},
-  db: { start: db_start, stop: db_stop, query: db_query, exec: db_exec, migrate: db_migrate },
-  server: { start: server_start },
-} as any;
-system_start(ctx, { env: "test" });
-
-// typed query
-type Issue = { id: number; title: string; status: string };
-const issues = db_query<Issue>(ctx, "SELECT * FROM issues");
+test("issues: create", () => {
+  const ctx = test_ctx();  // :memory: DB, migrations, all namespaces wired
+  ctx.db.exec(ctx, "INSERT INTO issues (title) VALUES (?)", ["Bug"]);
+  const issues = ctx.db.query(ctx, "SELECT * FROM issues");
+  expect(issues[0].title).toBe("Bug");
+  ctx.db.stop(ctx);
+});
 ```
+
+Add a function → `load_all` regenerates `test_ctx.ts` → tests pick it up.
 
 ```bash
 bun test                    # all tests
 bun test login.test.ts      # one file
 ```
 
+## Type Checking
+
+```bash
+bunx tsc --noEmit
+```
+
+What the compiler catches:
+- `ctx.db.queryyy` — Property does not exist on type
+- `ctx.blabla` — no such namespace
+- `request.methood` — Property does not exist on Request
+- `ctx.state.db.prepare(...)` — only in db/ (typed via state.ts)
+
+What it doesn't catch (by design):
+- `ctx.state.counter` — no state.ts, remains `any`
+- `ctx.t` — REPL scratch, intentionally `any`
+- `db.query` without `<T>` — returns `any[]`
+
 ## Route Convention
 
-Folders map to route prefixes:
+Folders map to route prefixes. `$` → `:param`. `_` → `/`.
 
 | Folder / file | Route |
 |--------------|-------|
@@ -290,13 +283,21 @@ Folders map to route prefixes:
 | `ui/issues_$id.ts` | `/ui/issues/:id` |
 | `api/issues.ts` | `/api/issues` |
 | `api/issues_$id.ts` | `/api/issues/:id` |
-| `issues/http.ts` | `/issues` |
 
-`$` in filename → `:param` in route. `_` → `/`.
+Files with `_` prefix, `_layout` or `_middleware` suffix → NOT routes (internal helpers).
+
+## Auto-generated files
+
+`load_all` generates two files — don't edit them:
+
+| File | Purpose |
+|------|---------|
+| `ctx_ns.d.ts` | Strict namespace types + global `types.*` declarations |
+| `test_ctx.ts` | Test helper with all imports and namespace wiring |
 
 ## Auth
 
-- Default user: `admin` / `admin` (created by `db/migrate`)
+- Default user: `admin` / `admin` (seeded by `db/migrate`)
 - Login page: `/ui/login` (form prefilled)
 - All routes except `/ui/login` and `/health` require auth
 - Session cookie resolved by `auth/session_from_cookie` before handler runs
@@ -305,16 +306,19 @@ Folders map to route prefixes:
 
 ```
 ctx.ts / ctx_ns.d.ts           — types + auto-generated namespace signatures
-repl-proc-start.ts             — REPL server (:3001)
-repl_send.ts                   — CLI client
+repl-proc-start.ts             — REPL server + file watcher + livereload
+repl_send.ts                   — CLI client (dev/test environments)
+test_ctx.ts                    — auto-generated test helper
 
 db/
   start / stop                 — SQLite connection (WAL mode)
   query<T> / exec              — typed SELECT → T[], mutations → {changes, lastInsertRowid}
   migrate                      — schema + seed data
+  state.ts                     — typed state: Database | null
 
 server/
   start / stop                 — HTTP server with routing + auth guard
+  state.ts                     — typed state: Server | null
 
 system/
   start / stop                 — boot/shutdown orchestration
@@ -325,10 +329,10 @@ auth/
 ui/
   layout / escapeHtml          — shared helpers (Tailwind CDN)
   login / logout               — auth pages
-  issues / issues_$id / issues_$id_edit — issue tracker UI
+  issues / issues_$id / ...    — issue tracker UI
 
 api/
-  issues / issues_$id / issues_$id_comments / issues_$id_delete / issues_$id_status
+  issues / issues_$id / ...    — form action handlers (POST → redirect)
 
 issues/
   http / http_$id              — JSON API
@@ -343,10 +347,10 @@ issues/
 
 2. **Write a function** — `export default` in a namespace folder. Use `ctx.ns.fn` for deps. No imports from other project files.
 
-3. **Load/Reload:**
+3. **Save** — file watcher auto-reloads. Or manually:
    ```bash
    bun repl_send.ts load_all          # new files
-   bun repl_send.ts reload db/query   # changed files
+   bun repl_send.ts reload db/query   # specific file
    ```
 
 4. **Test:**
@@ -354,6 +358,7 @@ issues/
    bun repl_send.ts eval 'db.query(ctx, "SELECT 1")'
    curl localhost:3002/route
    bun test
+   bunx tsc --noEmit
    ```
 
 5. **If broken** — restart:
