@@ -36,6 +36,7 @@ export default function test_ctx() {
   const ctx = {
     state: {},
     routes: {},
+    env: { ...process.env },
     api: {
       issues: _api_issues,
       issues_$id: _api_issues_$id,

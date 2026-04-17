@@ -1,10 +1,9 @@
-import type { Database } from "bun:sqlite";
 import type { Server } from "bun";
-
 export type CtxNs = import("./ctx_ns").default;
 
 export type Ctx = CtxNs & {
   routes: Record<string, Function>;
+  env: Record<string, string | undefined>;
   t: any;
 }
 
@@ -25,5 +24,5 @@ declare global {
   var __name: string;
 }
 
-const ctx: Ctx = { routes: {}, state: {}, t: null } as Ctx;
+const ctx: Ctx = { routes: {}, state: {}, env: process.env, t: null } as Ctx;
 export default ctx;

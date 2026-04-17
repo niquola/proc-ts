@@ -1,7 +1,15 @@
-const [op, arg] = process.argv.slice(2);
+const args = process.argv.slice(2);
+
+// First arg can be env name: dev (default) or test
+let env = "dev";
+if (args[0] === "dev" || args[0] === "test") {
+  env = args.shift()!;
+}
+
+const [op, arg] = args;
 
 if (!op) {
-  console.log("Usage: bun repl_send.ts load_all | reload <fn_name> | eval '<code>'");
+  console.log("Usage: bun repl_send.ts [dev|test] load_all | reload <path> | eval '<code>'");
   process.exit(1);
 }
 
@@ -9,8 +17,8 @@ let body: any;
 if (op === "load_all") {
   body = { op: "load_all" };
 } else if (op === "reload") {
-  if (!arg) { console.log("reload requires fn_name"); process.exit(1); }
-  body = { op: "reload", path: `./${arg}.ts` };
+  if (!arg) { console.log("reload requires path"); process.exit(1); }
+  body = { op: "reload", path: arg.endsWith(".ts") ? arg : `${arg}.ts` };
 } else if (op === "eval") {
   if (!arg) { console.log("eval requires code"); process.exit(1); }
   body = { op: "eval", code: arg };
@@ -19,7 +27,13 @@ if (op === "load_all") {
   process.exit(1);
 }
 
-const res = await fetch("http://localhost:3001/repl", {
+const ports: Record<string, string> = {
+  dev: process.env.REPL_PORT || "3001",
+  test: process.env.TEST_REPL_PORT || "3003",
+};
+const replPort = ports[env];
+
+const res = await fetch(`http://localhost:${replPort}/repl`, {
   method: "POST",
   body: JSON.stringify(body),
 });
